@@ -1,5 +1,17 @@
 # ----------------------------
 # Imports
+
+
+### V control
+#1
+#git add fusion_dragon_im.py
+#2 — Commit as version 2
+#git commit -m "Version 2: Added train/validation split and validation accuracy"
+#3 — (Optional) Tag version 2
+#git tag v2
+#git checkout v1   # go back to baseline
+#git checkout v2   # go to updated version with validation
+
 # ----------------------------
 import torch
 import torch.nn as nn
@@ -45,7 +57,7 @@ class ChestXRayDataset(Dataset):
             if not os.path.exists(folder_path):
                 continue
             for fname in os.listdir(folder_path):
-                if fname.lower().endswith(('.png', '.jpg', '.jpeg')):
+                if fname.lower().endswith(('.jpeg')):
                     self.images.append(os.path.join(folder_path, fname))
                     # Tabular features: zeros for clean, ones for noisy
                     self.tabular.append([0]*tabular_dim if label==0 else [1]*tabular_dim)
@@ -66,6 +78,24 @@ class ChestXRayDataset(Dataset):
 # ----------------------------
 dataset = ChestXRayDataset('chest_xray')
 loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+# ----------------------------
+# DataLoader with train/val split
+# ----------------------------
+from torch.utils.data import random_split
+
+dataset = ChestXRayDataset('chest_xray')
+
+# Split dataset: 80% train, 20% validation
+val_size = int(0.2 * len(dataset))
+train_size = len(dataset) - val_size
+train_ds, val_ds = random_split(dataset, [train_size, val_size])
+
+# Create DataLoaders
+train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_ds, batch_size=batch_size)
+
+
 
 # ----------------------------
 # Swin Tiny CNN
@@ -115,7 +145,8 @@ total_images = len(dataset)
 for epoch in range(num_epochs):
     running_loss = 0.0
     running_acc = 0.0
-    for imgs, tabular, lbls in loader:
+    for imgs, tabular, lbls in train_loader:
+    #for imgs, tabular, lbls in loader:
         optimizer.zero_grad()
 
         # Step 1: CNN embeddings
@@ -143,6 +174,28 @@ for epoch in range(num_epochs):
     epoch_loss = running_loss / total_images
     epoch_acc = running_acc / total_images
     print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss:.4f}, Acc: {epoch_acc*100:.2f}%")
+# ----------------------------
+# Validation loop
+# ----------------------------
+fusion_model.eval()
+val_loss = 0.0
+val_acc = 0.0
+with torch.no_grad():
+    for imgs, tabular, lbls in val_loader:
+        img_emb = cnn.forward_features(imgs)
+        img_emb = img_emb.mean(dim=[2,3])
+        outputs = fusion_model(img_emb, tabular)
+        loss = criterion(outputs, lbls)
+        preds = torch.argmax(outputs, dim=1)
+        acc = (preds == lbls).float().mean()
+        val_loss += loss.item() * imgs.size(0)
+        val_acc += acc.item() * imgs.size(0)
+
+val_loss /= len(val_loader.dataset)
+val_acc /= len(val_loader.dataset)
+print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, Train Acc: {epoch_acc*100:.2f}%, "
+      f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc*100:.2f}%")
+
 
 # ----------------------------
 # Plot a few predictions
